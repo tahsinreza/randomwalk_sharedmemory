@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <fstream>
 #include <iostream>
@@ -12,6 +13,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/random.hpp>
 #include <boost/random/random_device.hpp>
+#include <boost/random/discrete_distribution.hpp>
 
 template <typename RandomNumberEngine, typename Uint>
 Uint uinform_random_uint(RandomNumberEngine& rnd_eng, Uint a, Uint b) {
@@ -41,8 +43,8 @@ class random_walk {
       // setup memory used by walkers
       std::cout << "Setting up parallel walkers ... " << std::endl;
       for (size_t tc = 0; tc < host_thread_count; tc++) {
-        std::vector<Vertex> walker_memory(0);
-        walker_memory_per_thread.push_back(walker_memory);
+        //std::vector<Vertex> walker_memory(0);
+        walker_memory_per_thread.push_back(std::vector<Vertex>(0));
       }
     }
   

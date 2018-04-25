@@ -1,4 +1,4 @@
-#include <atomic>
+//#include <atomic>
 //#include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -6,7 +6,6 @@
 #include <sstream>
 #include <string>
 #include <tuple>
-#include <unordered_map> 
 #include <vector>
 
 #include "omp.h"
@@ -17,14 +16,13 @@
 #include <boost/random/discrete_distribution.hpp>
 
 //#include "graph.hpp"
-//#include "pattern_util.hpp"
 #include "random_walk.hpp"
 #include "util.hpp"
 
 enum DISTRIBUTION {UNIFORM, RANDOM, BIASED, ALL};
 
-template <typename Vertex, typename Edge, typename EdgeList>
-Edge read_edge_list_file(const std::string input_filename, EdgeList& edge_list,
+template <typename Vertex, typename Edge, typename EdgeListTuple>
+Edge read_edge_list_file(const std::string input_filename, EdgeListTuple& edge_list,
   Vertex& max_vertex, Edge skip_lines_count = 0) {
   std::ifstream input_file(input_filename, std::ifstream::in);
   Edge edge_count(0);
@@ -59,8 +57,8 @@ void generate_edge_list(EdgeListTuple& edge_list, EdgeList& edges) {
   }
 }
 
-template <typename EdgeList, typename VertexList, typename Vertex>          
-Vertex generate_vertex_list(EdgeList& edge_list, VertexList& vertices,
+template <typename EdgeListTuple, typename VertexList, typename Vertex>          
+Vertex generate_vertex_list(EdgeListTuple& edge_list, VertexList& vertices,
   VertexList& vertex_degree, const Vertex max_vertex) {
 
   //std::ofstream vertex_file("vertex_file_tmp", std::ofstream::out);
@@ -113,14 +111,15 @@ Vertex generate_vertex_list(EdgeList& edge_list, VertexList& vertices,
 }
 
 void usage(uint64_t walker_count, uint64_t walker_hop_count, 
-  std::string dist_opt)  {
-  std::cerr << "Usage: -d <string> -w <uint> [edgelist_input_filename walks_output_filepath]\n"
+  size_t thread_count, std::string dist_opt) {  
+  std::cerr << "Usage: -d <string> -w <uint> -s <uint> -t <uint> [edgelist_input_filename walks_output_filepath]\n"
     //[vertex_input_file edge_input_file vertex_data_input_file \
     //pattern_input_file vertex_rank_output_file]\n"
     << " -d <string>   - distribution type (uniform, random, or biased, Default is " << dist_opt << ")\n"
     << " -h            - print help and exit\n"
     << " -w <uint>     - number of walkers (nonzero unsigned integer, Default is " << walker_count << ")\n"
     << " -s <uint>     - walker max step count (nonzero unsigned integer, Default is " << walker_hop_count << ")\n"
+    << " -t <uint>     - number of CPU threads (nonzero unsigned integer, Default is " << thread_count << ")\n"
     << "[file ...] - list of input and output files (required)\n\n";
 }
 
@@ -128,12 +127,14 @@ void parse_cmd_line(int argc, char** argv,
   std::string& vertex_input_filename, std::string& edge_input_filename, 
   std::string& vertex_data_input_filename, std::string& pattern_input_filename, 
   std::string& vertex_rank_output_filename, std::string& walks_output_filename, 
-  uint64_t& walker_count, uint64_t& walker_hop_count, DISTRIBUTION& wlkr_dist) {
+  uint64_t& walker_count, uint64_t& walker_hop_count, size_t& thread_count, 
+  size_t default_thread_count, DISTRIBUTION& wlkr_dist) {
 
   std::cout << "CMD line:";
   for (int i=0; i<argc; ++i) {
     std::cout << " " << argv[i];
   }
+  std::cout << std::endl;
   std::cout << std::endl;
 
   std::vector<std::string> dist_opts = {"uniform", "random", "biased", "all"};
@@ -143,14 +144,14 @@ void parse_cmd_line(int argc, char** argv,
 
   if (argc < 3) { 
     std::cerr << "Too few arguments."<<std::endl;
-    usage(walker_count, walker_hop_count, dist_opt);
+    usage(walker_count, walker_hop_count, default_thread_count, dist_opt);
     exit(-1);
   }
 
   bool prn_help = false;
   char c;
 
-  while ((c = getopt(argc, argv, "d:w:s:h ")) != -1) {
+  while ((c = getopt(argc, argv, "d:w:s:t:h ")) != -1) {
      switch (c) {
        case 'h':
          prn_help = true;
@@ -171,6 +172,9 @@ void parse_cmd_line(int argc, char** argv,
       case 's':
          walker_hop_count = std::stoull(optarg);
          break;
+      case 't':
+         thread_count = std::stoull(optarg);
+         break;
       default:
          std::cerr << "Unrecognized option: " << c << "." <<std::endl;
          prn_help = true;
@@ -179,7 +183,7 @@ void parse_cmd_line(int argc, char** argv,
    }
 
    if (prn_help) {
-     usage(walker_count, walker_hop_count, dist_opt);
+     usage(walker_count, walker_hop_count, default_thread_count, dist_opt);
      exit(-1);
    }
 
@@ -204,10 +208,9 @@ void parse_cmd_line(int argc, char** argv,
      << "\n" << std::endl;*/
 }
 
-
 int main(int argc, char** argv) {
   
-  // parse inputs
+  // parse commandline input
   std::string vertex_input_filename = "dummy";
   std::string edge_input_filename;
   std::string vertex_data_input_filename = "dummy";
@@ -217,12 +220,25 @@ int main(int argc, char** argv) {
   std::string walks_output_filename; // filepath
   uint64_t walker_count = 10;
   uint64_t walker_hop_count = 5;
+  size_t thread_count = 0;
   DISTRIBUTION wlkr_dist = RANDOM;
+
+  size_t host_thread_count = 0;
+
+  {
+  #pragma omp parallel
+  { 
+    host_thread_count = omp_get_num_threads();
+  }
+  //std::cout << "Number of available threads: " << host_thread_count 
+  //  << std::endl;
+  }
 
   parse_cmd_line(argc, argv, vertex_input_filename, edge_input_filename,
     vertex_data_input_filename, pattern_input_filename,
     vertex_rank_output_filename, walks_output_filename,
-    walker_count, walker_hop_count, wlkr_dist);   
+    walker_count, walker_hop_count, thread_count, host_thread_count, 
+    wlkr_dist);   
  
   //std::cout << "Application ... " << std::endl;
 
@@ -230,20 +246,36 @@ int main(int argc, char** argv) {
   std::chrono::time_point<std::chrono::steady_clock> end_time;
   double elapsed_time;
 
-  // gather host info
+  // host info
   char hostname[HOST_NAME_MAX];
   gethostname(hostname, HOST_NAME_MAX);
   std::cout << "Hostname: " << hostname << std::endl;
    
-  size_t host_thread_count = 0;
-  {
-  #pragma omp parallel
-  { 
-    host_thread_count = omp_get_num_threads();
-  }
-  std::cout << "Number of available threads: " << host_thread_count << std::endl;
+  //size_t host_thread_count = 0;
+   
+  //{
+  //#pragma omp parallel
+  //{ 
+  //  host_thread_count = omp_get_num_threads();
+  //}
+  std::cout << "Number of available threads on " << hostname << ": " 
+    << host_thread_count << std::endl;
+  //}
+   
+  if (thread_count > 0) {
+    omp_set_dynamic(0);
+    omp_set_num_threads(thread_count);
+    {
+    #pragma omp parallel
+    {
+      host_thread_count = omp_get_num_threads();
+    }
+    std::cout << "Number of threads to be used: " << host_thread_count << std::endl;
+    } 
   }
 
+  std::cout << std::endl;
+ 
   //////////////////////////////////////////////////////////////////////////////
 
   // graph construction
@@ -321,13 +353,13 @@ int main(int argc, char** argv) {
   std::cout << "Max vertex: " << max_vertex << std::endl;
 
   // Test
-  for (Vertex v = 0; v < vertex_count; v++) {
+  //for (Vertex v = 0; v < vertex_count; v++) {
     //std::cerr << v << " " << vertex_degree[v] << " " << vertices[v] << std::endl; 
-    for (Edge e = vertices[v]; e < vertices[v + 1]; e++) {
-      uint64_t v_nbr = edges[e];
-      assert(v_nbr <= max_vertex);
-    }  
-  } 
+  //  for (Edge e = vertices[v]; e < vertices[v + 1]; e++) {
+  //    uint64_t v_nbr = edges[e];
+  //    assert(v_nbr <= max_vertex);
+  //  }  
+  //} 
   // Test
 
   std::chrono::time_point<std::chrono::steady_clock> global_end_time =
@@ -336,7 +368,9 @@ int main(int argc, char** argv) {
     global_end_time);
   std::cout << "Time: " << global_elapsed_time << " seconds." 
     << std::endl;
- 
+
+  std::cout << std::endl;
+
   //////////////////////////////////////////////////////////////////////////////
 
   // random walk
@@ -347,7 +381,6 @@ int main(int argc, char** argv) {
 
   typedef random_walk<Vertex, Edge, VertexList, EdgeList, uint64_t> RandomWalk;
   RandomWalk rw(walker_count, walker_hop_count, host_thread_count); 
- 
   rw.do_random_walk(vertices, vertex_degree, edges, walks_output_filename);
 
   global_end_time =  std::chrono::steady_clock::now();
@@ -356,6 +389,7 @@ int main(int argc, char** argv) {
   std::cout << "Time: " << global_elapsed_time << " seconds."
     << std::endl;
 
+  std::cout << std::endl;
    
   //////////////////////////////////////////////////////////////////////////////
  
