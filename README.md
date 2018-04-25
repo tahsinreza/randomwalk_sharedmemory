@@ -1,1 +1,1 @@
-Random walk
+Random walk - Walker parallel sharedmemory
