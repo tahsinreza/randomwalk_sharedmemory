@@ -54,6 +54,7 @@ class random_walk {
       EdgeList& edges, std::string walks_output_filepath) {
 
       // setup parallel output files
+      std::cout << "Setting up output ... " << std::endl;
       for (size_t tc = 0; tc < host_thread_count; tc++) {
         std::string walks_output_filename = walks_output_filepath +
           "/thread_" + std::to_string(tc);
@@ -88,7 +89,7 @@ class random_walk {
         walker_memory_per_thread[thread_ID].push_back(current_vertex); 
         current_walker_hop_count++;
 
-        auto max_trials = 5;
+        auto max_trials = 3;
         auto trials = 0;  
 
         do {
